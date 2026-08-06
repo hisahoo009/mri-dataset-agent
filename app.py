@@ -134,7 +134,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # queue() matters: a run takes 30-60s and a Space multiplexes visitors.
-    build_ui().queue(max_size=8).launch(server_name="0.0.0.0", server_port=7860)
+    # show_error surfaces the actual exception in the chat window; Gradio's
+    # default hides it behind a bare "Error", which is useless to debug from.
+    build_ui().queue(max_size=8).launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        show_error=True,
+    )
     return 0
 
 
