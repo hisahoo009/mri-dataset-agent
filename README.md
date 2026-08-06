@@ -9,7 +9,7 @@ python_version: '3.13'
 app_file: app.py
 pinned: false
 license: mit
-short_description: Finds open MRI lesion datasets and verifies their image formats
+short_description: Finds open MRI lesion datasets and checks image formats
 ---
 
 # MRI Lesion Dataset Agent
