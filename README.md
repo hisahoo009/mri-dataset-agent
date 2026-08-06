@@ -124,12 +124,32 @@ anything the tools didn't sanction.
 The repo is Space-ready: `app.py` is the entry point and this README already carries the
 YAML header Spaces needs.
 
+**Option A — one-shot upload (no git).** Simplest if you already created the Space:
+
 ```bash
-huggingface-cli login
-huggingface-cli repo create mri-lesion-dataset-finder --type space --space_sdk gradio
-git remote add space https://huggingface.co/spaces/<your-username>/mri-lesion-dataset-finder
+pip install -U huggingface_hub        # the CLI is now `hf`, not `huggingface-cli`
+hf auth login
+hf upload <your-username>/<space-name> . . --repo-type=space
+```
+
+**Option B — git remotes.** Use this if you also want the code on GitHub:
+
+```bash
+git remote add origin https://github.com/<you>/mri-lesion-dataset-finder.git
+git remote add space  https://huggingface.co/spaces/<you>/<space-name>
+
+git push -u origin main
+git pull space main --allow-unrelated-histories   # the Space already has a README
 git push space main
 ```
+
+That `--allow-unrelated-histories` pull is the step people miss: a freshly created Space
+is not actually empty — HF commits a `README.md` and `.gitattributes` for you, so the
+first push is rejected as unrelated. Pull once, keep *your* README when resolving the
+conflict (it carries the YAML header), then push.
+
+Authentication for `git push` to HF uses an access token with **write** scope as the
+password, not your account password. `hf auth login` stores one for you.
 
 Then in **Settings → Variables and secrets**:
 
