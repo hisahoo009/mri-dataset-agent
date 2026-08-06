@@ -1,0 +1,4 @@
+smolagents>=1.20
+pydantic>=2.7
+requests>=2.31
+gradio>=5.0
