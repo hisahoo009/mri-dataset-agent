@@ -88,6 +88,12 @@ def build_ui():
         title=TITLE,
         description=DESCRIPTION,
         examples=EXAMPLES,
+        # MUST stay False. HF Spaces sets GRADIO_CACHE_EXAMPLES=true, which makes
+        # Gradio execute every example at startup — four full agent runs before
+        # the app can serve a single request. That burns minutes and inference
+        # credits on every boot, and if anything raises (e.g. HF_TOKEN missing)
+        # the startup-events endpoint 500s and the whole Space dies with exit 1.
+        cache_examples=False,
         chatbot=gr.Chatbot(label="Agent", height=520, **type_kwarg),
         save_history=True,
         **type_kwarg,

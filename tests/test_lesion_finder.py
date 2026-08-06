@@ -350,6 +350,22 @@ def test_app_builds_ui(monkeypatch):
     assert isinstance(app.build_ui(), gradio.Blocks)
 
 
+def test_app_never_caches_examples(monkeypatch):
+    """HF Spaces sets GRADIO_CACHE_EXAMPLES=true, which runs every example at
+    startup — four agent runs before the app serves anyone, and a hard crash if
+    one of them raises. The explicit False must survive that env var."""
+    pytest.importorskip("gradio")
+    monkeypatch.setenv("HF_TOKEN", "dummy-token-for-construction")
+    monkeypatch.setenv("GRADIO_CACHE_EXAMPLES", "true")
+
+    import app
+
+    monkeypatch.setattr(app, "build_agent", lambda **kw: build_agent(
+        model=DummyModel(), agent_type="tool_calling", verbosity_level=0
+    ))
+    assert app.build_ui().cache_examples is False
+
+
 def test_app_list_lesions_needs_no_gradio(capsys):
     """The CLI path must not import gradio — that's why the import is lazy."""
     import app
