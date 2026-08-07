@@ -22,21 +22,22 @@ Built for the Hugging Face Agents course. Four files, no framework beyond smolag
 ## The idea
 
 Searching for "MS lesion dataset" gives you names that *match*. It doesn't tell you
-whether there are any actual images inside — plenty of hits are papers, metadata, or
-NIfTI volumes you'd need extra libraries to open.
+what's actually inside — plenty of hits are papers, metadata, or volumes you'd need
+extra libraries to open.
 
 So the agent works in steps, and each step is a tool:
 
 ```
 normalize_lesion_query   "MS lesion datasets"  ->  lesion_key: "ms_lesion"
 search_datasets          lesion_key            ->  candidate dataset ids
-inspect_dataset          one dataset id        ->  how many .jpg/.jpeg/.png files
+inspect_dataset          one dataset id        ->  file count, formats, licence
 ```
 
-Only `.jpg`, `.jpeg` and `.png` count — images you can open with PIL and nothing
-else. Anything else reads as zero images and gets skipped.
+`inspect_dataset` reports every format it finds and doesn't filter. The agent
+explains what those formats mean — `.jpg`/`.png` open with PIL, `.nii`/`.dcm` need
+nibabel or pydicom — and you decide.
 
-The agent decides which candidates are worth inspecting, then writes the report.
+The agent chooses which candidates are worth inspecting, then writes the report.
 That decision-making between tool calls is what makes it an *agent* rather than a
 script.
 
@@ -80,8 +81,8 @@ anything reaches the Hugging Face API it is one of eight known strings, so a
 prompt-injected search phrase has nowhere to go.
 
 **`inspect_dataset` validates its own output** against the `DatasetReport` pydantic
-model before returning, and it is the only source of truth about whether a dataset
-is usable. A malformed response from the Hub becomes a clear error rather than a
+model before returning, and it is the only source of truth about a dataset's
+contents. A malformed response from the Hub becomes a clear error rather than a
 half-filled dict the model might hallucinate around.
 
 Errors are raised as plain `ValueError` with a message naming the valid options.
@@ -123,8 +124,6 @@ enough — no model runs locally, the agent only makes API calls.
 - Licences are reported as the Hub declares them. Check the licence and
   de-identification status yourself before using medical imaging data.
 - Adding a lesion type is one entry in `LESIONS` in `lesions.py`.
-- Accepting more formats is one entry in `IMAGE_FORMATS` in `tools.py`.
 - Adding a data source means one more `@tool` function in `tools.py`.
-- Datasets that ship images inside a `.zip` or `.parquet` will read as zero images.
-  That's deliberate: a file listing can't see inside an archive, so guessing would
-  be worse than skipping.
+- A file listing can't see inside a `.zip` or `.parquet`, so those datasets are
+  reported by their archive format. Whether images are in there is the reader's call.

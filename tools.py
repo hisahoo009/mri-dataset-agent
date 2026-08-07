@@ -21,19 +21,14 @@ from lesions import LESIONS, asks_for_medical_advice, find_lesion
 HF_API = "https://huggingface.co/api"
 TIMEOUT = 20
 
-# The only formats we accept: plain images you can open with PIL.
-IMAGE_FORMATS = {".jpg", ".jpeg", ".png"}
-
 
 class DatasetReport(BaseModel):
     """The shape inspect_dataset promises to return."""
 
     dataset_id: str
     total_files: int
-    image_count: int
-    image_formats: dict
+    formats: dict
     license: str
-    has_images: bool
     verdict: str
 
 
@@ -102,10 +97,10 @@ def search_datasets(lesion_key: str) -> list:
 
 @tool
 def inspect_dataset(dataset_id: str) -> dict:
-    """Count the .jpg, .jpeg and .png files in a dataset.
+    """List a dataset's files and report which formats it contains.
 
-    This is the only thing that proves a dataset is usable. A dataset with zero
-    image files should not be recommended, whatever its name says.
+    This is the only thing that shows what is actually inside a dataset, rather
+    than what its name suggests.
 
     Args:
         dataset_id: An id from search_datasets, e.g. "user/brain-mri".
@@ -121,21 +116,15 @@ def inspect_dataset(dataset_id: str) -> dict:
     response.raise_for_status()
     files = [e.get("path", "") for e in response.json() if e.get("type") == "file"]
 
-    images = Counter(ext for ext in map(_extension, files) if ext in IMAGE_FORMATS)
-    image_count = sum(images.values())
-
-    if image_count:
-        verdict = f"{image_count} image files ({', '.join(sorted(images))}). Open with PIL."
-    else:
-        verdict = "No .jpg/.jpeg/.png files found. Skip this one."
+    formats = Counter(ext for ext in map(_extension, files) if ext)
+    top = ", ".join(f"{ext} x{n}" for ext, n in formats.most_common(5))
+    verdict = f"{len(files)} files. Formats: {top}" if top else "No files listed."
 
     report = {
         "dataset_id": dataset_id,
         "total_files": len(files),
-        "image_count": image_count,
-        "image_formats": dict(images),
+        "formats": dict(formats.most_common(15)),
         "license": _license(dataset_id),
-        "has_images": image_count > 0,
         "verdict": verdict,
     }
 

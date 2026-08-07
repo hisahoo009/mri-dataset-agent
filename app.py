@@ -15,7 +15,7 @@ from lesions import LESIONS
 
 DESCRIPTION = f"""
 Finds **open** MRI datasets for a lesion type, then opens each one's file listing to
-confirm it really contains `.jpg`, `.jpeg` or `.png` images you can load with PIL.
+report what is actually inside — file counts, formats, and licence.
 
 Supported lesion types: {', '.join(LESIONS)}
 
