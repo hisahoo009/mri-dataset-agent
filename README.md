@@ -22,16 +22,19 @@ Built for the Hugging Face Agents course. Four files, no framework beyond smolag
 ## The idea
 
 Searching for "MS lesion dataset" gives you names that *match*. It doesn't tell you
-whether the files inside are `.jpg` images you can open with PIL, NIfTI volumes that
-need `nibabel`, or a `.zip` you'd have to download to find out.
+whether there are any actual images inside — plenty of hits are papers, metadata, or
+NIfTI volumes you'd need extra libraries to open.
 
 So the agent works in steps, and each step is a tool:
 
 ```
 normalize_lesion_query   "MS lesion datasets"  ->  lesion_key: "ms_lesion"
 search_datasets          lesion_key            ->  candidate dataset ids
-inspect_dataset          one dataset id        ->  what formats are really in it
+inspect_dataset          one dataset id        ->  how many .jpg/.jpeg/.png files
 ```
+
+Only `.jpg`, `.jpeg` and `.png` count — images you can open with PIL and nothing
+else. Anything else reads as zero images and gets skipped.
 
 The agent decides which candidates are worth inspecting, then writes the report.
 That decision-making between tool calls is what makes it an *agent* rather than a
@@ -77,8 +80,9 @@ anything reaches the Hugging Face API it is one of eight known strings, so a
 prompt-injected search phrase has nowhere to go.
 
 **`inspect_dataset` validates its own output** against the `DatasetReport` pydantic
-model before returning. A malformed response from the Hub becomes a clear error
-rather than a half-filled dict the model might hallucinate around.
+model before returning, and it is the only source of truth about whether a dataset
+is usable. A malformed response from the Hub becomes a clear error rather than a
+half-filled dict the model might hallucinate around.
 
 Errors are raised as plain `ValueError` with a message naming the valid options.
 smolagents feeds that back to the model, which can correct itself and retry.
@@ -119,4 +123,8 @@ enough — no model runs locally, the agent only makes API calls.
 - Licences are reported as the Hub declares them. Check the licence and
   de-identification status yourself before using medical imaging data.
 - Adding a lesion type is one entry in `LESIONS` in `lesions.py`.
+- Accepting more formats is one entry in `IMAGE_FORMATS` in `tools.py`.
 - Adding a data source means one more `@tool` function in `tools.py`.
+- Datasets that ship images inside a `.zip` or `.parquet` will read as zero images.
+  That's deliberate: a file listing can't see inside an archive, so guessing would
+  be worse than skipping.

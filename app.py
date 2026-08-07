@@ -14,9 +14,8 @@ from agent import build_agent
 from lesions import LESIONS
 
 DESCRIPTION = f"""
-Finds **open** MRI datasets for a lesion type, then checks what image formats they
-actually contain: `.jpg`/`.png` you can open with PIL, NIfTI/DICOM that need
-`nibabel`, or images hidden inside archives.
+Finds **open** MRI datasets for a lesion type, then opens each one's file listing to
+confirm it really contains `.jpg`, `.jpeg` or `.png` images you can load with PIL.
 
 Supported lesion types: {', '.join(LESIONS)}
 
@@ -24,8 +23,8 @@ Supported lesion types: {', '.join(LESIONS)}
 """
 
 EXAMPLES = [
-    "Open datasets of multiple sclerosis lesions with jpg images",
-    "Brain tumour / glioma MRI datasets I can load with PIL",
+    "Open datasets of multiple sclerosis lesions",
+    "Brain tumour / glioma MRI datasets",
     "Prostate lesion MRI datasets with a permissive licence",
 ]
 

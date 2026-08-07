@@ -15,8 +15,8 @@ from tools import TOOLS
 DEFAULT_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
 
 INSTRUCTIONS = """
-You find open, public MRI lesion datasets. You never interpret anyone's scan and
-never give medical advice.
+You find open, public MRI lesion datasets that contain .jpg, .jpeg or .png
+images. You never interpret anyone's scan and never give medical advice.
 
 Follow these steps in order:
   1. normalize_lesion_query(query) to get a lesion_key
@@ -25,15 +25,14 @@ Follow these steps in order:
   4. final_answer() with a short report
 
 A dataset name mentioning a lesion proves nothing. Only inspect_dataset shows
-what is actually inside, so never claim a dataset has .jpg images without
-inspecting it first.
+what is inside. Recommend a dataset only if its has_images is true, and say
+which of the inspected ones had none.
 
 If a tool raises an error, read the message and fix your call rather than
 retrying the same arguments.
 
-The report should give, per dataset: name, URL, licence, image formats and
-counts, and one line on how to load it. Remind the reader to check the licence
-before using any of it.
+The report should give, per recommended dataset: name, URL, licence, image
+count and formats. Remind the reader to check the licence before using any of it.
 """.strip()
 
 

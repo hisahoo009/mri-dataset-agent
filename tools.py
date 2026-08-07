@@ -21,22 +21,19 @@ from lesions import LESIONS, asks_for_medical_advice, find_lesion
 HF_API = "https://huggingface.co/api"
 TIMEOUT = 20
 
-# What counts as an image, and what a reader would have to do to open it.
-PHOTO_FORMATS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
-VOLUME_FORMATS = {".nii", ".nii.gz", ".dcm", ".mha", ".nrrd"}
-ARCHIVE_FORMATS = {".zip", ".tar", ".tar.gz", ".parquet", ".arrow", ".h5"}
+# The only formats we accept: plain images you can open with PIL.
+IMAGE_FORMATS = {".jpg", ".jpeg", ".png"}
 
 
 class DatasetReport(BaseModel):
     """The shape inspect_dataset promises to return."""
 
     dataset_id: str
-    files_checked: int
-    photo_images: int
-    volume_images: int
-    archives: int
-    formats: dict
+    total_files: int
+    image_count: int
+    image_formats: dict
     license: str
+    has_images: bool
     verdict: str
 
 
@@ -105,7 +102,10 @@ def search_datasets(lesion_key: str) -> list:
 
 @tool
 def inspect_dataset(dataset_id: str) -> dict:
-    """List a dataset's files and report which image formats it really contains.
+    """Count the .jpg, .jpeg and .png files in a dataset.
+
+    This is the only thing that proves a dataset is usable. A dataset with zero
+    image files should not be recommended, whatever its name says.
 
     Args:
         dataset_id: An id from search_datasets, e.g. "user/brain-mri".
@@ -119,34 +119,23 @@ def inspect_dataset(dataset_id: str) -> dict:
         timeout=TIMEOUT,
     )
     response.raise_for_status()
+    files = [e.get("path", "") for e in response.json() if e.get("type") == "file"]
 
-    counts = Counter()
-    for entry in response.json():
-        if entry.get("type") == "file":
-            counts[_extension(entry.get("path", ""))] += 1
-    counts.pop("", None)
+    images = Counter(ext for ext in map(_extension, files) if ext in IMAGE_FORMATS)
+    image_count = sum(images.values())
 
-    photo = sum(n for ext, n in counts.items() if ext in PHOTO_FORMATS)
-    volume = sum(n for ext, n in counts.items() if ext in VOLUME_FORMATS)
-    archive = sum(n for ext, n in counts.items() if ext in ARCHIVE_FORMATS)
-
-    if photo:
-        verdict = f"{photo} ready-to-use image files. Open them with PIL."
-    elif volume:
-        verdict = f"{volume} NIfTI/DICOM volumes. Needs nibabel or pydicom."
-    elif archive:
-        verdict = f"No loose images; {archive} archives. Images may be inside them."
+    if image_count:
+        verdict = f"{image_count} image files ({', '.join(sorted(images))}). Open with PIL."
     else:
-        verdict = "No image files found."
+        verdict = "No .jpg/.jpeg/.png files found. Skip this one."
 
     report = {
         "dataset_id": dataset_id,
-        "files_checked": sum(counts.values()),
-        "photo_images": photo,
-        "volume_images": volume,
-        "archives": archive,
-        "formats": dict(counts.most_common(10)),
+        "total_files": len(files),
+        "image_count": image_count,
+        "image_formats": dict(images),
         "license": _license(dataset_id),
+        "has_images": image_count > 0,
         "verdict": verdict,
     }
 
@@ -159,17 +148,13 @@ def inspect_dataset(dataset_id: str) -> dict:
 
 def _extension(path):
     name = path.lower().rsplit("/", 1)[-1]
-    for compound in (".nii.gz", ".tar.gz"):
-        if name.endswith(compound):
-            return compound
     return "." + name.rsplit(".", 1)[-1] if "." in name else ""
 
 
 def _license(dataset_id):
     try:
         response = requests.get(f"{HF_API}/datasets/{dataset_id}", timeout=TIMEOUT)
-        tags = response.json().get("tags", [])
-        for tag in tags:
+        for tag in response.json().get("tags", []):
             if isinstance(tag, str) and tag.startswith("license:"):
                 return tag.split(":", 1)[1]
     except Exception:
