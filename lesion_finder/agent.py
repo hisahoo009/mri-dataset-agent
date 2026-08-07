@@ -42,17 +42,24 @@ def env(name: str, default: str = "") -> str:
 
 
 def _tool_choice():
-    """Work around smolagents' default of `tool_choice="required"`.
+    """Decide what to do with smolagents' `tool_choice` parameter.
 
-    Several Hugging Face Inference Providers accept only "auto" or "none" and
-    reject anything else with a 400 INVALID_TOOL_CHOICE, which surfaces as an
-    AgentGenerationError on the very first step. "auto" is the safe default:
-    the model may still call tools, it just isn't forced to.
+    smolagents defaults to `tool_choice="required"`. Hugging Face Inference
+    Providers disagree about this parameter in two different ways:
 
-    Set MRI_TOOL_CHOICE to "required" if your provider supports it, or to
-    "omit" to leave the parameter out of the request entirely.
+        400 INVALID_TOOL_CHOICE      only "auto"/"none" accepted
+        422 UNSUPPORTED_OPENAI_PARAMS  the parameter isn't supported at all
+
+    Worse, setting it as a *model* kwarg makes smolagents attach it to every
+    request — including the planning step, which sends no tools at all. A
+    provider that tolerates `tool_choice` alongside `tools` may still 422 when
+    it arrives on its own.
+
+    So the default is to omit the parameter entirely and let the provider apply
+    its own behaviour (tools present -> auto). Set MRI_TOOL_CHOICE to "auto",
+    "none" or "required" to send it explicitly, if your provider supports that.
     """
-    value = env("MRI_TOOL_CHOICE", "auto").lower()
+    value = env("MRI_TOOL_CHOICE", "omit").lower()
     return REMOVE_PARAMETER if value in ("omit", "remove", "") else value
 
 _SHARED_INSTRUCTIONS = """

@@ -160,7 +160,7 @@ Then in **Settings → Variables and secrets**:
 | `HF_TOKEN` | yes | secret — your Inference Providers token |
 | `MRI_AGENT_TYPE` | no | `tool_calling` (default) or `code` |
 | `MRI_AGENT_MODEL` | no | defaults to `Qwen/Qwen2.5-Coder-32B-Instruct` |
-| `MRI_TOOL_CHOICE` | no | `auto` (default), `required`, or `omit` — see below |
+| `MRI_TOOL_CHOICE` | no | `omit` (default), or `auto` / `none` / `required` — see below |
 
 Free **CPU Basic** (2 vCPU, 16 GB) is enough — no model runs locally, the agent only
 makes API calls. Spaces have outbound internet, so all three dataset backends are
@@ -182,12 +182,15 @@ start on top of the usual 30–60s run.
 
 ## Notes and caveats
 
-- **`INVALID_TOOL_CHOICE` 400 errors.** smolagents defaults to `tool_choice="required"`,
-  but many Hugging Face Inference Providers accept only `"auto"` and `"none"` and reject
-  the request on the agent's very first step. `agent.py` therefore passes
-  `tool_choice="auto"`; override with `MRI_TOOL_CHOICE=required` if your provider
-  supports it, or `MRI_TOOL_CHOICE=omit` to drop the parameter entirely. Only affects
-  `tool_calling` — a `CodeAgent` sends no tools at all.
+- **`tool_choice` errors.** smolagents defaults to `tool_choice="required"`, which
+  Hugging Face Inference Providers reject in two different ways: `400
+  INVALID_TOOL_CHOICE` (only `auto`/`none` accepted) or `422
+  UNSUPPORTED_OPENAI_PARAMS` (the parameter isn't supported at all). Compounding it,
+  a `tool_choice` set as a *model* kwarg is attached to **every** request, including the
+  planning step, which sends no tools — and a provider that tolerates it alongside
+  `tools` may still reject it on its own. `agent.py` therefore omits the parameter by
+  default and lets the provider apply its own behaviour. Set `MRI_TOOL_CHOICE` to
+  `auto`, `none` or `required` to send it explicitly.
 - **Run `smoke_test.py` first.** The adapters were written against the documented API
   shapes but I couldn't reach the network to verify them live; the smoke test calls each
   backend directly and prints what came back, so any parsing mismatch shows up

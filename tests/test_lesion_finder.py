@@ -262,12 +262,15 @@ def test_tool_calling_agent_builds():
     assert not hasattr(agent, "additional_authorized_imports") or not agent.tools.get("python_interpreter")
 
 
-def test_tool_choice_defaults_to_auto(monkeypatch):
-    """smolagents sends tool_choice='required'; many HF providers 400 on that."""
+def test_tool_choice_is_omitted_by_default(monkeypatch):
+    """smolagents sends tool_choice='required'; HF providers variously reject
+    that (400 INVALID_TOOL_CHOICE) or the parameter itself (422
+    UNSUPPORTED_OPENAI_PARAMS). Omitting it is the portable choice."""
     monkeypatch.delenv("MRI_TOOL_CHOICE", raising=False)
     monkeypatch.setenv("HF_TOKEN", "dummy")
 
     from smolagents import InferenceClientModel
+    from smolagents.models import REMOVE_PARAMETER
 
     captured = {}
 
@@ -277,7 +280,29 @@ def test_tool_choice_defaults_to_auto(monkeypatch):
 
     monkeypatch.setattr(InferenceClientModel, "__init__", fake_init)
     build_agent(agent_type="tool_calling", verbosity_level=0)
-    assert captured["tool_choice"] == "auto"
+    assert captured["tool_choice"] is REMOVE_PARAMETER
+
+
+def test_tool_choice_absent_from_requests_with_and_without_tools(monkeypatch):
+    """The planning step sends no tools. A stray tool_choice there is what
+    produced the 422 — so assert it is gone from *both* request shapes."""
+    monkeypatch.delenv("MRI_TOOL_CHOICE", raising=False)
+
+    from smolagents import InferenceClientModel
+
+    from lesion_finder.agent import _tool_choice
+    from lesion_finder.tools import build_tools
+
+    model = InferenceClientModel(model_id="x/y", token="dummy",
+                                 tool_choice=_tool_choice())
+    messages = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+
+    with_tools = model._prepare_completion_kwargs(
+        messages=messages, tools_to_call_from=build_tools())
+    without_tools = model._prepare_completion_kwargs(messages=messages)
+
+    assert "tool_choice" not in with_tools
+    assert "tool_choice" not in without_tools
 
 
 def test_token_whitespace_is_stripped(monkeypatch):
