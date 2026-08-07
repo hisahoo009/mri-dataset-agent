@@ -1,27 +1,24 @@
 """Assembles the multi-step agent.
 
-Two flavours, same tools and same guardrails:
+A `CodeAgent` does the tool calling: smolagents renders each tool's name,
+signature and docstring into the system prompt, and the model orchestrates them
+by writing Python. Nothing about the OpenAI `tools` parameter is involved, so
+this works with any chat model — including provider routes that answer
+`422 UNSUPPORTED_OPENAI_PARAMS` to a `ToolCallingAgent`.
 
-  agent_type="code"          CodeAgent — the model writes Python to orchestrate
-                             the tools. Better reasoning, but it executes
-                             generated code. Use locally.
-  agent_type="tool_calling"  ToolCallingAgent — the model emits structured tool
-                             calls, no code execution at all. Use for a public
-                             deployment (e.g. an HF Space) where the input box
-                             is a prompt-injection surface.
+The trade-off is that generated code gets executed. smolagents runs it through a
+restricted interpreter rather than `exec`, and `additional_authorized_imports`
+below keeps the reachable surface to three parsing modules.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Literal
 
-from smolagents import CodeAgent, InferenceClientModel, Model, MultiStepAgent, ToolCallingAgent
+from smolagents import CodeAgent, InferenceClientModel, Model
 from smolagents.models import REMOVE_PARAMETER
 
 from .tools import build_tools
-
-AgentType = Literal["code", "tool_calling"]
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
 
@@ -47,22 +44,19 @@ def _tool_choice():
     smolagents defaults to `tool_choice="required"`. Hugging Face Inference
     Providers disagree about this parameter in two different ways:
 
-        400 INVALID_TOOL_CHOICE      only "auto"/"none" accepted
+        400 INVALID_TOOL_CHOICE        only "auto"/"none" accepted
         422 UNSUPPORTED_OPENAI_PARAMS  the parameter isn't supported at all
 
-    Worse, setting it as a *model* kwarg makes smolagents attach it to every
-    request — including the planning step, which sends no tools at all. A
-    provider that tolerates `tool_choice` alongside `tools` may still 422 when
-    it arrives on its own.
-
-    So the default is to omit the parameter entirely and let the provider apply
-    its own behaviour (tools present -> auto). Set MRI_TOOL_CHOICE to "auto",
-    "none" or "required" to send it explicitly, if your provider supports that.
+    A `CodeAgent` sends no tools, so it should never need this — but a model
+    kwarg is attached to *every* request, so a stray value would ride along on
+    calls that have no business carrying it. Omitting is the safe default.
+    Set MRI_TOOL_CHOICE to "auto", "none" or "required" to send it explicitly.
     """
     value = env("MRI_TOOL_CHOICE", "omit").lower()
     return REMOVE_PARAMETER if value in ("omit", "remove", "") else value
 
-_SHARED_INSTRUCTIONS = """
+
+INSTRUCTIONS = """
 You find OPEN, PUBLIC MRI lesion datasets. You never interpret anyone's scan and
 never give medical advice; if asked, say so and stop.
 
@@ -73,20 +67,10 @@ Work through the pipeline in order — do not skip a step, do not invent results
   3. inspect_dataset_files(...)         -> once per promising candidate (3-6 of them),
                                            to see which image formats it really has
   4. shortlist_image_datasets(...)      -> final ranking
-""".strip()
 
-_CODE_STATE_HINT = """
 Every tool returns a JSON string. Parse it with json.loads() before using it, and
 keep the parsed dicts in variables so you can pass them to the next step.
-""".strip()
 
-_TOOL_CALLING_STATE_HINT = """
-Every tool returns a JSON string. Read the values you need out of it. When you
-call shortlist_image_datasets, pass `inspections` as a list containing the exact
-JSON strings that inspect_dataset_files returned — the tool parses them for you.
-""".strip()
-
-_RULES = """
 Rules:
 - A dataset name mentioning a lesion proves nothing. Only inspect_dataset_files
   tells you what is inside. Never claim a dataset has .jpg images without inspecting.
@@ -100,26 +84,17 @@ Rules:
 """.strip()
 
 
-def instructions_for(agent_type: AgentType) -> str:
-    hint = _CODE_STATE_HINT if agent_type == "code" else _TOOL_CALLING_STATE_HINT
-    return f"{_SHARED_INSTRUCTIONS}\n\n{hint}\n\n{_RULES}"
-
-
 def build_agent(
     model: Model | None = None,
     *,
-    agent_type: AgentType = "code",
     max_steps: int = 12,
     verbosity_level: int = 2,
-) -> MultiStepAgent:
+) -> CodeAgent:
     """Create the agent.
 
     `max_steps` is itself a guardrail: the pipeline needs ~8 steps, so 12 leaves
     slack for one or two self-corrections without letting a confused agent loop.
     """
-    if agent_type not in ("code", "tool_calling"):
-        raise ValueError(f"agent_type must be 'code' or 'tool_calling', got {agent_type!r}")
-
     if model is None:
         model = InferenceClientModel(
             model_id=env("MRI_AGENT_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL,
@@ -131,20 +106,13 @@ def build_agent(
             tool_choice=_tool_choice(),
         )
 
-    common = dict(
+    return CodeAgent(
         tools=build_tools(),
         model=model,
         max_steps=max_steps,
         verbosity_level=verbosity_level,
-        instructions=instructions_for(agent_type),
+        instructions=INSTRUCTIONS,
         planning_interval=4,
-    )
-
-    if agent_type == "tool_calling":
-        return ToolCallingAgent(**common)
-
-    return CodeAgent(
-        **common,
         # Narrow allowlist: enough to parse tool output, not enough to fetch
         # anything the tools did not sanction.
         additional_authorized_imports=["json", "re", "statistics"],

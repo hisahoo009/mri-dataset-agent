@@ -10,10 +10,10 @@ from __future__ import annotations
 import json
 
 import pytest
-from smolagents import CodeAgent, Model, ToolCallingAgent
+from smolagents import CodeAgent, Model
 from smolagents.models import ChatMessage
 
-from lesion_finder.agent import build_agent, instructions_for
+from lesion_finder.agent import INSTRUCTIONS, build_agent
 from lesion_finder.ontology import detect_clinical_intent, resolve_lesion_type
 from lesion_finder.sources import categorize, file_extension, summarize_files
 from lesion_finder.tools import (
@@ -247,19 +247,22 @@ TOOL_NAMES = {
 }
 
 
-def test_code_agent_builds():
-    agent = build_agent(model=DummyModel(), agent_type="code", verbosity_level=0)
+def test_agent_builds():
+    agent = build_agent(model=DummyModel(), verbosity_level=0)
     assert isinstance(agent, CodeAgent)
     assert set(agent.tools) == TOOL_NAMES
     assert agent.max_steps == 12
+    assert agent.additional_authorized_imports == ["json", "re", "statistics"]
 
 
-def test_tool_calling_agent_builds():
-    agent = build_agent(model=DummyModel(), agent_type="tool_calling", verbosity_level=0)
-    assert isinstance(agent, ToolCallingAgent)
-    assert set(agent.tools) == TOOL_NAMES
-    # The safety property we care about for a public Space.
-    assert not hasattr(agent, "additional_authorized_imports") or not agent.tools.get("python_interpreter")
+def test_tools_are_described_in_the_prompt_not_sent_as_api_tools():
+    """This is why a CodeAgent works where a ToolCallingAgent 422s: the tools
+    are prompt text, so no OpenAI `tools` parameter is ever sent."""
+    agent = build_agent(model=DummyModel(), verbosity_level=0)
+    prompt = agent.system_prompt
+    for name in TOOL_NAMES:
+        assert name in prompt
+    assert "def search_open_datasets(" in prompt
 
 
 def test_tool_choice_is_omitted_by_default(monkeypatch):
@@ -279,7 +282,7 @@ def test_tool_choice_is_omitted_by_default(monkeypatch):
         Model.__init__(self)
 
     monkeypatch.setattr(InferenceClientModel, "__init__", fake_init)
-    build_agent(agent_type="tool_calling", verbosity_level=0)
+    build_agent(verbosity_level=0)
     assert captured["tool_choice"] is REMOVE_PARAMETER
 
 
@@ -320,7 +323,7 @@ def test_token_whitespace_is_stripped(monkeypatch):
         Model.__init__(self)
 
     monkeypatch.setattr(InferenceClientModel, "__init__", fake_init)
-    build_agent(agent_type="tool_calling", verbosity_level=0)
+    build_agent(verbosity_level=0)
 
     assert captured["token"] == "hf_abc123"
     assert captured["model_id"] == "some/model"
@@ -338,7 +341,7 @@ def test_blank_token_falls_back_to_none(monkeypatch):
         Model.__init__(self)
 
     monkeypatch.setattr(InferenceClientModel, "__init__", fake_init)
-    build_agent(agent_type="code", verbosity_level=0)
+    build_agent(verbosity_level=0)
     assert captured["token"] is None
 
 
@@ -353,16 +356,12 @@ def test_tool_choice_env_override(monkeypatch):
     assert _tool_choice() is REMOVE_PARAMETER
 
 
-def test_bad_agent_type_rejected():
-    with pytest.raises(ValueError, match="agent_type"):
-        build_agent(model=DummyModel(), agent_type="react")
-
-
-def test_instructions_differ_by_agent_type():
-    assert "json.loads()" in instructions_for("code")
-    assert "json.loads()" not in instructions_for("tool_calling")
-    assert "exact\nJSON strings" in instructions_for("tool_calling").replace("  ", " ") or \
-           "JSON strings" in instructions_for("tool_calling")
+def test_instructions_cover_the_pipeline():
+    for step in ("normalize_lesion_query", "search_open_datasets",
+                 "inspect_dataset_files", "shortlist_image_datasets"):
+        assert step in INSTRUCTIONS
+    assert "json.loads()" in INSTRUCTIONS          # CodeAgent parses tool output
+    assert "never give medical advice" in INSTRUCTIONS
 
 
 def _inspection_dict(dataset_id="a/b", photographic=25):
@@ -379,7 +378,7 @@ def test_shortlist_accepts_dicts():
 
 
 def test_shortlist_accepts_list_of_json_strings():
-    """How a ToolCallingAgent will pass them back."""
+    """Tolerated so a tool that hands back raw JSON still works."""
     payload = [json.dumps(_inspection_dict("x/y"), default=str)]
     out = json.loads(ShortlistImageDatasetsTool()(inspections=payload))
     assert out["accepted"][0]["dataset_id"] == "x/y"
@@ -407,7 +406,7 @@ def test_app_builds_ui(monkeypatch):
     import app
 
     monkeypatch.setattr(app, "build_agent", lambda **kw: build_agent(
-        model=DummyModel(), agent_type=kw.get("agent_type", "tool_calling"), verbosity_level=0
+        model=DummyModel(), verbosity_level=0
     ))
     assert isinstance(app.build_ui(), gradio.Blocks)
 
@@ -423,7 +422,7 @@ def test_app_never_caches_examples(monkeypatch):
     import app
 
     monkeypatch.setattr(app, "build_agent", lambda **kw: build_agent(
-        model=DummyModel(), agent_type="tool_calling", verbosity_level=0
+        model=DummyModel(), verbosity_level=0
     ))
     assert app.build_ui().cache_examples is False
 
@@ -455,6 +454,5 @@ def test_app_cli_builds_agent_and_applies_policy(monkeypatch, capsys):
 
     assert app.main(["--cli", "glioma datasets", "--policy", "any", "--quiet"]) == 0
     assert "image_policy='any'" in seen["task"]
-    assert seen["kwargs"]["agent_type"] == app.AGENT_TYPE
     assert seen["kwargs"]["verbosity_level"] == 0     # --quiet
     assert capsys.readouterr().out.strip() == "report"

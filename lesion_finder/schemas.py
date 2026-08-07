@@ -146,10 +146,12 @@ class ShortlistIn(StrictModel):
     @field_validator("inspections", mode="before")
     @classmethod
     def _accept_json_strings(cls, v):
-        """A ToolCallingAgent hands back raw JSON strings rather than dicts.
+        """Accept dicts or the raw JSON strings the tools actually return.
 
-        Accept either, so the same tool works under CodeAgent and
-        ToolCallingAgent. A whole JSON array in one string is unwrapped too.
+        The model is copying `inspect_dataset_files` output between steps, and
+        whether it lands here parsed or still a string depends on how the
+        generated code handled it. A whole JSON array in one string is
+        unwrapped too.
         """
         import json
 

@@ -46,8 +46,7 @@ Or from Python:
 
 ```python
 from lesion_finder import build_agent
-agent = build_agent()                            # CodeAgent
-agent = build_agent(agent_type="tool_calling")   # no code execution
+agent = build_agent()
 print(agent.run("Find open datasets of multiple sclerosis lesions with .jpg images"))
 ```
 
@@ -117,9 +116,15 @@ dataset shows only archives, it's flagged `images_possibly_in_archives` rather t
 accepted or silently dropped — the file listing genuinely can't tell.
 
 **Agent-level** — `max_steps=12` (the pipeline needs ~8, leaving slack for one or two
-self-corrections), and for the `CodeAgent`, `additional_authorized_imports` is limited to
+self-corrections), and `additional_authorized_imports` is limited to
 `json`, `re`, `statistics`, so generated code can parse tool output but can't fetch
 anything the tools didn't sanction.
+
+**Why a `CodeAgent`** — smolagents renders each tool's signature and docstring into the
+system prompt, and the model calls them by writing Python. No OpenAI `tools` parameter
+is sent, so this works on any chat model. A `ToolCallingAgent` sends the tools as a
+structured API field, which many Hugging Face Inference Provider routes reject outright
+with `422 UNSUPPORTED_OPENAI_PARAMS: tools`.
 
 ## Deploying to a Hugging Face Space
 
@@ -158,7 +163,6 @@ Then in **Settings → Variables and secrets**:
 | Key | Required | Notes |
 |---|---|---|
 | `HF_TOKEN` | yes | secret — your Inference Providers token |
-| `MRI_AGENT_TYPE` | no | `tool_calling` (default) or `code` |
 | `MRI_AGENT_MODEL` | no | defaults to `Qwen/Qwen2.5-Coder-32B-Instruct` |
 | `MRI_TOOL_CHOICE` | no | `omit` (default), or `auto` / `none` / `required` — see below |
 
@@ -171,18 +175,12 @@ Two things to know before you make it public:
 - **The Space spends *your* inference credits.** It runs on your `HF_TOKEN`, so every
   visitor's query bills your account. Fine for a course submission; add HF OAuth sign-in
   if you share it widely.
-- **`app.py` defaults to `agent_type="code"` — for compatibility, not preference.**
-  `ToolCallingAgent` is the safer choice on a public Space (it executes no generated
-  code, and a public text box is a prompt-injection surface), but it requires a model
-  whose Inference Provider route supports the OpenAI `tools` parameter. Many do not,
-  answering `422 UNSUPPORTED_OPENAI_PARAMS: tools`. The `CodeAgent` puts tool
-  descriptions in the prompt instead, so it works with any chat model. If you have a
-  tools-capable model, set `MRI_AGENT_TYPE=tool_calling` and `MRI_AGENT_MODEL`
-  accordingly — that's the better configuration.
-
-  The `CodeAgent` isn't unguarded: smolagents runs generated code through a restricted
-  interpreter rather than `exec`, and `additional_authorized_imports` is limited to
-  `json`, `re`, `statistics`.
+- **The `CodeAgent` executes model-written Python inside the Space container**, and a
+  public text box is a prompt-injection surface. It isn't unguarded — smolagents uses a
+  restricted interpreter rather than `exec`, and `additional_authorized_imports` is
+  limited to `json`, `re`, `statistics`, so generated code can parse tool output but
+  can't reach the network or filesystem. Still worth understanding before you share the
+  URL widely.
 
 Free Spaces sleep after ~48h idle, so the first request after a quiet spell pays a cold
 start on top of the usual 30–60s run.

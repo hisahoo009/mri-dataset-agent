@@ -4,7 +4,7 @@
     schemas.py    pydantic In/Out models + image-format policy
     tools.py      ValidatedTool guardrail + the four pipeline tools
     sources.py    HTTP, format classification, one adapter per repository
-    agent.py      assembly — CodeAgent or ToolCallingAgent
+    agent.py      assembly — the CodeAgent that orchestrates the tools
 """
 
 from .agent import build_agent

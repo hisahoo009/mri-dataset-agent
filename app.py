@@ -6,17 +6,10 @@
     python app.py --cli "glioma MRI" --policy photographic_or_volumetric
     python app.py --list-lesions
 
-The UI defaults to a CodeAgent, because it works with any chat model. The
-ToolCallingAgent is preferable on a public Space — it executes no generated
-code — but it needs a model whose provider supports the OpenAI `tools`
-parameter, and many Hugging Face Inference Provider routes do not (they answer
-422 UNSUPPORTED_OPENAI_PARAMS). Set MRI_AGENT_TYPE=tool_calling together with a
-tools-capable MRI_AGENT_MODEL if you have one.
-
 Space secrets (Settings -> Variables and secrets):
     HF_TOKEN          required — your Inference Providers token
     MRI_AGENT_MODEL   optional — defaults to Qwen/Qwen2.5-Coder-32B-Instruct
-    MRI_AGENT_TYPE    optional — 'code' (default) or 'tool_calling'
+    MRI_TOOL_CHOICE   optional — 'omit' (default), 'auto', 'none' or 'required'
 """
 
 from __future__ import annotations
@@ -25,12 +18,10 @@ import argparse
 import os
 import sys
 
-from lesion_finder.agent import build_agent, env
+from lesion_finder.agent import build_agent
 from lesion_finder.ontology import supported_lesion_keys
 
 # gradio is imported lazily inside build_ui() so --cli works without it installed.
-
-AGENT_TYPE = env("MRI_AGENT_TYPE", "code") or "code"
 
 TITLE = "MRI Lesion Dataset Finder"
 
@@ -39,8 +30,7 @@ Finds **open** MRI datasets for a lesion type, then verifies what image formats 
 actually contain — `.jpg`/`.png` you can load with PIL, versus NIfTI/DICOM that need
 `nibabel`/`pydicom`, versus images hidden inside archives.
 
-Searches Hugging Face Hub, Zenodo and OpenNeuro. Running as a **{AGENT_TYPE}** agent.
-A full run takes 30–60 seconds.
+Searches Hugging Face Hub, Zenodo and OpenNeuro. A full run takes 30–60 seconds.
 
 **Supported lesion types:** {', '.join(supported_lesion_keys())}
 
@@ -80,7 +70,7 @@ def build_ui():
               "newline from the settings box) — stripped. Re-paste it without "
               "the newline to silence this.")
 
-    ui = GradioUI(build_agent(agent_type=AGENT_TYPE, verbosity_level=1))
+    ui = GradioUI(build_agent(verbosity_level=1))
 
     # Reuse smolagents' streaming callback, but wrap it in our own ChatInterface
     # so we get a title, description and examples. If a future smolagents renames
@@ -120,8 +110,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="Run one query headlessly and print the report.")
     parser.add_argument("--policy", default="photographic_only", choices=POLICIES,
                         help="Which image formats count as usable.")
-    parser.add_argument("--agent-type", default=None, choices=["code", "tool_calling"],
-                        help="Overrides MRI_AGENT_TYPE. CLI defaults to 'code'.")
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--list-lesions", action="store_true",
@@ -134,7 +122,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cli:
         agent = build_agent(
-            agent_type=args.agent_type or AGENT_TYPE,
             max_steps=args.max_steps,
             verbosity_level=0 if args.quiet else 2,
         )
