@@ -280,6 +280,43 @@ def test_tool_choice_defaults_to_auto(monkeypatch):
     assert captured["tool_choice"] == "auto"
 
 
+def test_token_whitespace_is_stripped(monkeypatch):
+    """A trailing newline on HF_TOKEN produces `Bearer hf_...\\n`, which httpx
+    rejects with LocalProtocolError on the first model call."""
+    monkeypatch.setenv("HF_TOKEN", "hf_abc123\n")
+    monkeypatch.setenv("MRI_AGENT_MODEL", "  some/model \n")
+
+    from smolagents import InferenceClientModel
+
+    captured = {}
+
+    def fake_init(self, **kwargs):
+        captured.update(kwargs)
+        Model.__init__(self)
+
+    monkeypatch.setattr(InferenceClientModel, "__init__", fake_init)
+    build_agent(agent_type="tool_calling", verbosity_level=0)
+
+    assert captured["token"] == "hf_abc123"
+    assert captured["model_id"] == "some/model"
+
+
+def test_blank_token_falls_back_to_none(monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "   \n")
+
+    from smolagents import InferenceClientModel
+
+    captured = {}
+
+    def fake_init(self, **kwargs):
+        captured.update(kwargs)
+        Model.__init__(self)
+
+    monkeypatch.setattr(InferenceClientModel, "__init__", fake_init)
+    build_agent(agent_type="code", verbosity_level=0)
+    assert captured["token"] is None
+
+
 def test_tool_choice_env_override(monkeypatch):
     from smolagents.models import REMOVE_PARAMETER
 

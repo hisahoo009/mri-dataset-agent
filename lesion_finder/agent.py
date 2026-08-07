@@ -26,6 +26,21 @@ AgentType = Literal["code", "tool_calling"]
 DEFAULT_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct"
 
 
+def env(name: str, default: str = "") -> str:
+    """Read an environment variable, stripped of surrounding whitespace.
+
+    Secrets pasted into a Space settings box very often keep a trailing
+    newline. An HF_TOKEN ending in "\\n" produces the header
+    `Bearer hf_...\\n`, which httpx rejects outright with
+
+        LocalProtocolError: Illegal header value b'Bearer hf_******\\n'
+
+    — long after startup, on the first model call, and nowhere near the
+    actual cause. Stripping on read makes that impossible.
+    """
+    return os.environ.get(name, default).strip()
+
+
 def _tool_choice():
     """Work around smolagents' default of `tool_choice="required"`.
 
@@ -37,7 +52,7 @@ def _tool_choice():
     Set MRI_TOOL_CHOICE to "required" if your provider supports it, or to
     "omit" to leave the parameter out of the request entirely.
     """
-    value = os.environ.get("MRI_TOOL_CHOICE", "auto").strip().lower()
+    value = env("MRI_TOOL_CHOICE", "auto").lower()
     return REMOVE_PARAMETER if value in ("omit", "remove", "") else value
 
 _SHARED_INSTRUCTIONS = """
@@ -100,8 +115,10 @@ def build_agent(
 
     if model is None:
         model = InferenceClientModel(
-            model_id=os.environ.get("MRI_AGENT_MODEL", DEFAULT_MODEL),
-            token=os.environ.get("HF_TOKEN"),
+            model_id=env("MRI_AGENT_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL,
+            # `or None` so an empty/whitespace secret falls back to whatever
+            # token the environment is logged in with, rather than sending "".
+            token=env("HF_TOKEN") or None,
             # Model kwargs have the highest priority in smolagents' completion
             # kwargs, so this overrides its "required" default. See _tool_choice.
             tool_choice=_tool_choice(),

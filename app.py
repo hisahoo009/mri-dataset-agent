@@ -22,12 +22,12 @@ import argparse
 import os
 import sys
 
-from lesion_finder.agent import build_agent
+from lesion_finder.agent import build_agent, env
 from lesion_finder.ontology import supported_lesion_keys
 
 # gradio is imported lazily inside build_ui() so --cli works without it installed.
 
-AGENT_TYPE = os.environ.get("MRI_AGENT_TYPE", "tool_calling")
+AGENT_TYPE = env("MRI_AGENT_TYPE", "tool_calling") or "tool_calling"
 
 TITLE = "MRI Lesion Dataset Finder"
 
@@ -67,10 +67,15 @@ def build_ui():
     import gradio as gr
     from smolagents import GradioUI
 
-    if not os.environ.get("HF_TOKEN"):
+    raw = os.environ.get("HF_TOKEN", "")
+    if not raw.strip():
         # Warn at startup rather than failing cryptically on the first query.
         print("WARNING: HF_TOKEN is not set — model calls will fail. "
               "Set it in Space settings under Variables and secrets.")
+    elif raw != raw.strip():
+        print("NOTE: HF_TOKEN had surrounding whitespace (probably a trailing "
+              "newline from the settings box) — stripped. Re-paste it without "
+              "the newline to silence this.")
 
     ui = GradioUI(build_agent(agent_type=AGENT_TYPE, verbosity_level=1))
 
