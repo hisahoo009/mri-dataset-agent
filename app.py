@@ -1,140 +1,67 @@
-#!/usr/bin/env python3
-"""Single entry point — Gradio UI by default, CLI on request.
+"""Gradio UI, and a --cli flag for running one query in a terminal.
 
-    python app.py                                  # launch the UI (what a Space runs)
-    python app.py --cli "MS white matter lesions"  # one headless run, no Gradio needed
-    python app.py --cli "glioma MRI" --policy photographic_or_volumetric
-    python app.py --list-lesions
+    python app.py                       launch the UI (this is what a Space runs)
+    python app.py --cli "glioma MRI"    one headless run
 
-Space secrets (Settings -> Variables and secrets):
-    HF_TOKEN          required — your Inference Providers token
-    MRI_AGENT_MODEL   optional — defaults to Qwen/Qwen2.5-Coder-32B-Instruct
-    MRI_TOOL_CHOICE   optional — 'omit' (default), 'auto', 'none' or 'required'
+Set HF_TOKEN in Space settings under Variables and secrets.
 """
-
-from __future__ import annotations
 
 import argparse
 import os
 import sys
 
-from lesion_finder.agent import build_agent
-from lesion_finder.ontology import supported_lesion_keys
-
-# gradio is imported lazily inside build_ui() so --cli works without it installed.
-
-TITLE = "MRI Lesion Dataset Finder"
+from agent import build_agent
+from lesions import LESIONS
 
 DESCRIPTION = f"""
-Finds **open** MRI datasets for a lesion type, then verifies what image formats they
-actually contain — `.jpg`/`.png` you can load with PIL, versus NIfTI/DICOM that need
-`nibabel`/`pydicom`, versus images hidden inside archives.
+Finds **open** MRI datasets for a lesion type, then checks what image formats they
+actually contain: `.jpg`/`.png` you can open with PIL, NIfTI/DICOM that need
+`nibabel`, or images hidden inside archives.
 
-Searches Hugging Face Hub, Zenodo and OpenNeuro. A full run takes 30–60 seconds.
+Supported lesion types: {', '.join(LESIONS)}
 
-**Supported lesion types:** {', '.join(supported_lesion_keys())}
-
-*Research tooling only — this app does not interpret scans and gives no medical advice.
-Verify a dataset's licence and de-identification status before using it.*
+*Research tooling only. This does not interpret scans and gives no medical advice.*
 """
 
 EXAMPLES = [
-    "Open datasets of multiple sclerosis white matter lesions with jpg images",
-    "Glioma / brain tumour MRI datasets I can load with PIL",
-    "Ischaemic stroke lesion segmentation datasets, NIfTI is fine",
+    "Open datasets of multiple sclerosis lesions with jpg images",
+    "Brain tumour / glioma MRI datasets I can load with PIL",
     "Prostate lesion MRI datasets with a permissive licence",
 ]
 
-POLICIES = ["photographic_only", "photographic_or_volumetric", "any"]
-
-
-def _task(query: str, policy: str) -> str:
-    return f"{query}\n\nUse image_policy='{policy}' when shortlisting."
-
-
-# --------------------------------------------------------------------------- #
-# Gradio UI
-# --------------------------------------------------------------------------- #
 
 def build_ui():
     import gradio as gr
     from smolagents import GradioUI
 
-    raw = os.environ.get("HF_TOKEN", "")
-    if not raw.strip():
-        # Warn at startup rather than failing cryptically on the first query.
-        print("WARNING: HF_TOKEN is not set — model calls will fail. "
-              "Set it in Space settings under Variables and secrets.")
-    elif raw != raw.strip():
-        print("NOTE: HF_TOKEN had surrounding whitespace (probably a trailing "
-              "newline from the settings box) — stripped. Re-paste it without "
-              "the newline to silence this.")
+    if not os.environ.get("HF_TOKEN", "").strip():
+        print("WARNING: HF_TOKEN is not set — model calls will fail.")
 
     ui = GradioUI(build_agent(verbosity_level=1))
 
-    # Reuse smolagents' streaming callback, but wrap it in our own ChatInterface
-    # so we get a title, description and examples. If a future smolagents renames
-    # the private method, fall back to its stock app rather than crashing.
-    stream = getattr(ui, "_stream_response", None)
-    if stream is None:  # pragma: no cover
-        return ui.create_app()
-
-    type_kwarg = {"type": "messages"} if gr.__version__.startswith("5") else {}
-
     return gr.ChatInterface(
-        fn=stream,
-        title=TITLE,
+        fn=ui._stream_response,
+        title="MRI Lesion Dataset Finder",
         description=DESCRIPTION,
         examples=EXAMPLES,
-        # MUST stay False. HF Spaces sets GRADIO_CACHE_EXAMPLES=true, which makes
-        # Gradio execute every example at startup — four full agent runs before
-        # the app can serve a single request. That burns minutes and inference
-        # credits on every boot, and if anything raises (e.g. HF_TOKEN missing)
-        # the startup-events endpoint 500s and the whole Space dies with exit 1.
+        # Spaces sets GRADIO_CACHE_EXAMPLES=true, which would run every example
+        # at startup and kill the container if one fails.
         cache_examples=False,
-        chatbot=gr.Chatbot(label="Agent", height=520, **type_kwarg),
-        save_history=True,
-        **type_kwarg,
+        chatbot=gr.Chatbot(label="Agent", height=520),
     )
 
 
-# --------------------------------------------------------------------------- #
-# Entry point
-# --------------------------------------------------------------------------- #
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Find open MRI lesion datasets. With no arguments, launches the UI.",
-    )
-    parser.add_argument("--cli", metavar="QUERY",
-                        help="Run one query headlessly and print the report.")
-    parser.add_argument("--policy", default="photographic_only", choices=POLICIES,
-                        help="Which image formats count as usable.")
-    parser.add_argument("--max-steps", type=int, default=12)
-    parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--list-lesions", action="store_true",
-                        help="Print the supported lesion keys and exit.")
-    args = parser.parse_args(argv)
-
-    if args.list_lesions:
-        print("\n".join(supported_lesion_keys()))
-        return 0
+def main():
+    parser = argparse.ArgumentParser(description="Find open MRI lesion datasets.")
+    parser.add_argument("--cli", metavar="QUERY", help="Run one query and print the report.")
+    args = parser.parse_args()
 
     if args.cli:
-        agent = build_agent(
-            max_steps=args.max_steps,
-            verbosity_level=0 if args.quiet else 2,
-        )
-        print(agent.run(_task(args.cli, args.policy)))
+        print(build_agent().run(args.cli))
         return 0
 
-    # queue() matters: a run takes 30-60s and a Space multiplexes visitors.
-    # show_error surfaces the actual exception in the chat window; Gradio's
-    # default hides it behind a bare "Error", which is useless to debug from.
     build_ui().queue(max_size=8).launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        show_error=True,
+        server_name="0.0.0.0", server_port=7860, show_error=True
     )
     return 0
 

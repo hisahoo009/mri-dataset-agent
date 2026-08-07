@@ -12,208 +12,111 @@ license: mit
 short_description: Finds open MRI lesion datasets and checks image formats
 ---
 
-# MRI Lesion Dataset Agent
+# MRI Lesion Dataset Finder
 
-A multi-step **smolagents** agent that finds open datasets for a given type of MRI
-lesion and verifies the datasets actually contain images in a usable format
-(`.jpg`/`.png`/`.tif` and friends, or NIfTI/DICOM if you allow it).
+A small **smolagents** agent that finds open MRI datasets for a lesion type and
+checks whether they actually contain usable images.
 
-Built for the Hugging Face Agents course: pure smolagents + tool calls, no other agent
-framework.
+Built for the Hugging Face Agents course. Four files, no framework beyond smolagents.
 
-## Install
+## The idea
+
+Searching for "MS lesion dataset" gives you names that *match*. It doesn't tell you
+whether the files inside are `.jpg` images you can open with PIL, NIfTI volumes that
+need `nibabel`, or a `.zip` you'd have to download to find out.
+
+So the agent works in steps, and each step is a tool:
+
+```
+normalize_lesion_query   "MS lesion datasets"  ->  lesion_key: "ms_lesion"
+search_datasets          lesion_key            ->  candidate dataset ids
+inspect_dataset          one dataset id        ->  what formats are really in it
+```
+
+The agent decides which candidates are worth inspecting, then writes the report.
+That decision-making between tool calls is what makes it an *agent* rather than a
+script.
+
+## Files
+
+```
+app.py       Gradio UI + a --cli flag
+agent.py     builds the CodeAgent
+tools.py     the three tools
+lesions.py   the lesion vocabulary
+```
+
+## Run it
 
 ```bash
-pip install -r requirements-dev.txt
-export HF_TOKEN=hf_...        # for the inference model, not for dataset search
+pip install -r requirements.txt
+export HF_TOKEN=hf_...
+
+python app.py                                       # the UI
+python app.py --cli "open MS lesion datasets"       # one query, printed
 ```
-
-## Run
-
-```bash
-python smoke_test.py                              # tools only, no LLM — run this first
-python app.py                                     # the Gradio UI, locally
-python app.py --cli "open MS white matter lesion MRI datasets"
-python app.py --cli "glioma MRI" --policy photographic_or_volumetric
-python app.py --list-lesions
-pytest tests -q                                   # 40 offline tests
-```
-
-`app.py` is both the Space entry point and the CLI. The `gradio` import is lazy, so
-`--cli` works in an environment where Gradio isn't installed.
-
-Or from Python:
-
-```python
-from lesion_finder import build_agent
-agent = build_agent()
-print(agent.run("Find open datasets of multiple sclerosis lesions with .jpg images"))
-```
-
-## Layout
-
-Eight Python files. Each one is a seam you might actually want to edit independently.
-
-```
-├── app.py               Gradio UI + CLI — the HF Space entry point
-├── smoke_test.py        live check of the source adapters, no LLM
-├── tests/
-│   └── test_lesion_finder.py    40 offline tests
-└── lesion_finder/
-    ├── ontology.py      controlled vocabulary of MRI lesion types + synonyms
-    ├── schemas.py       pydantic In/Out model for every tool; image-format policy
-    ├── tools.py         ValidatedTool guardrail + the four pipeline tools
-    ├── sources.py       HTTP, format classification, one adapter per repository
-    └── agent.py         agent assembly + pipeline instructions
-```
-
-`sources.py` is sectioned: HTTP plumbing, then extension classification, then the
-three adapters, then the registry. `tools.py` holds `ValidatedTool` alongside the
-tools that subclass it — it has no other consumers, so a separate module bought
-nothing.
-
-## The four steps
-
-| # | Tool | Does |
-|---|------|------|
-| 1 | `normalize_lesion_query` | free text → validated `lesion_key` + search terms |
-| 2 | `search_open_datasets` | queries the repos → candidates (contents **unverified**) |
-| 3 | `inspect_dataset_files` | lists one dataset's files → what formats are really in it |
-| 4 | `shortlist_image_datasets` | applies the image policy → ranked shortlist + rejections |
-
-They are separate on purpose. Step 2 returns names that merely *match*; only step 3
-proves a dataset has images. The agent has to carry state between calls and decide
-which candidates justify the cost of a file listing — that's the multi-step part.
 
 ## Guardrails
 
-**Input validation** — every call goes through a pydantic model before the tool body runs.
+The agent takes free text from a stranger and calls APIs with it, so each tool
+checks its own inputs before doing any work.
 
-- `normalize_lesion_query` rejects anything that doesn't map to a known lesion type,
-  and refuses queries phrased as personal medical advice ("does my scan show a tumour").
-- `search_open_datasets` accepts only a `lesion_key` from step 1, never a raw user
-  phrase — so a prompt-injected search string can't reach the backends.
-- `sources` is a `Literal` allowlist; `max_results_per_source` is 1–25;
-  `max_files_scanned` is 10–5000; `top_k` is 1–20.
-- `extra="forbid"` — unexpected keys are an error, not silently dropped.
-- Failures raise `ToolInputError` with a message naming the valid options, so the agent
-  can correct itself instead of the run dying.
+**`normalize_lesion_query` is the gate.** It maps free text onto a known lesion key
+and raises on anything else — including requests for medical advice:
 
-**Output validation** — every return value is validated against its `*Out` model before
-the agent sees it. A malformed upstream response becomes a clean `ToolOutputError`, not
-a hallucination-friendly half-payload. Unknown keys from the API are dropped rather than
-leaking into the agent's context.
+```python
+normalize_lesion_query("datasets of cat photos")
+# ValueError: No supported lesion type found...
 
-**Image-format check** (`schemas.py`) — extensions are classified into:
-
-- `photographic` — `.jpg .jpeg .png .bmp .tif .tiff .webp .gif` — load directly with PIL
-- `volumetric` — `.nii .nii.gz .dcm .mha .nrrd` — need nibabel/pydicom
-- `archive` — `.zip .tar.gz .parquet .h5` — images may be hidden inside
-- `other`
-
-`image_policy="photographic_only"` (the default) keeps only the first group. If a
-dataset shows only archives, it's flagged `images_possibly_in_archives` rather than
-accepted or silently dropped — the file listing genuinely can't tell.
-
-**Agent-level** — `max_steps=12` (the pipeline needs ~8, leaving slack for one or two
-self-corrections), and `additional_authorized_imports` is limited to
-`json`, `re`, `statistics`, so generated code can parse tool output but can't fetch
-anything the tools didn't sanction.
-
-**Why a `CodeAgent`** — smolagents renders each tool's signature and docstring into the
-system prompt, and the model calls them by writing Python. No OpenAI `tools` parameter
-is sent, so this works on any chat model. A `ToolCallingAgent` sends the tools as a
-structured API field, which many Hugging Face Inference Provider routes reject outright
-with `422 UNSUPPORTED_OPENAI_PARAMS: tools`.
-
-## Deploying to a Hugging Face Space
-
-The repo is Space-ready: `app.py` is the entry point and this README already carries the
-YAML header Spaces needs.
-
-**Option A — one-shot upload (no git).** Simplest if you already created the Space:
-
-```bash
-pip install -U huggingface_hub        # the CLI is now `hf`, not `huggingface-cli`
-hf auth login
-hf upload <your-username>/<space-name> . . --repo-type=space
+normalize_lesion_query("does my mri show a tumor")
+# ValueError: Refused: this reads as a request for medical advice...
 ```
 
-**Option B — git remotes.** Use this if you also want the code on GitHub:
+**`search_datasets` only accepts a `lesion_key`**, never raw user text. By the time
+anything reaches the Hugging Face API it is one of eight known strings, so a
+prompt-injected search phrase has nowhere to go.
+
+**`inspect_dataset` validates its own output** against the `DatasetReport` pydantic
+model before returning. A malformed response from the Hub becomes a clear error
+rather than a half-filled dict the model might hallucinate around.
+
+Errors are raised as plain `ValueError` with a message naming the valid options.
+smolagents feeds that back to the model, which can correct itself and retry.
+
+The agent is also capped at `max_steps=12`, and generated code may only import
+`json`.
+
+## How the agent calls tools
+
+`CodeAgent` puts each tool's signature and docstring into the system prompt, and the
+model calls them by writing Python:
+
+```python
+result = normalize_lesion_query(query="MS lesion datasets")
+candidates = search_datasets(lesion_key=result["lesion_key"])
+```
+
+This is why the docstrings matter — they are the tool's interface, not decoration.
+
+It also means no OpenAI `tools` API parameter is ever sent, so this runs on any chat
+model. A `ToolCallingAgent` would send tools as a structured API field, which many
+Hugging Face Inference Provider routes reject with
+`422 UNSUPPORTED_OPENAI_PARAMS`.
+
+## Deploying to a Space
+
+`app.py` is the entry point and this README has the YAML header Spaces needs.
 
 ```bash
-git remote add origin https://github.com/<you>/mri-lesion-dataset-finder.git
-git remote add space  https://huggingface.co/spaces/<you>/<space-name>
-
-git push -u origin main
-git pull space main --allow-unrelated-histories   # the Space already has a README
 git push space main
 ```
 
-That `--allow-unrelated-histories` pull is the step people miss: a freshly created Space
-is not actually empty — HF commits a `README.md` and `.gitattributes` for you, so the
-first push is rejected as unrelated. Pull once, keep *your* README when resolving the
-conflict (it carries the YAML header), then push.
+Then set `HF_TOKEN` in **Settings → Variables and secrets**. Free CPU Basic is
+enough — no model runs locally, the agent only makes API calls.
 
-Authentication for `git push` to HF uses an access token with **write** scope as the
-password, not your account password. `hf auth login` stores one for you.
+## Notes
 
-Then in **Settings → Variables and secrets**:
-
-| Key | Required | Notes |
-|---|---|---|
-| `HF_TOKEN` | yes | secret — your Inference Providers token |
-| `MRI_AGENT_MODEL` | no | defaults to `Qwen/Qwen2.5-Coder-32B-Instruct` |
-| `MRI_TOOL_CHOICE` | no | `omit` (default), or `auto` / `none` / `required` — see below |
-
-Free **CPU Basic** (2 vCPU, 16 GB) is enough — no model runs locally, the agent only
-makes API calls. Spaces have outbound internet, so all three dataset backends are
-reachable.
-
-Two things to know before you make it public:
-
-- **The Space spends *your* inference credits.** It runs on your `HF_TOKEN`, so every
-  visitor's query bills your account. Fine for a course submission; add HF OAuth sign-in
-  if you share it widely.
-- **The `CodeAgent` executes model-written Python inside the Space container**, and a
-  public text box is a prompt-injection surface. It isn't unguarded — smolagents uses a
-  restricted interpreter rather than `exec`, and `additional_authorized_imports` is
-  limited to `json`, `re`, `statistics`, so generated code can parse tool output but
-  can't reach the network or filesystem. Still worth understanding before you share the
-  URL widely.
-
-Free Spaces sleep after ~48h idle, so the first request after a quiet spell pays a cold
-start on top of the usual 30–60s run.
-
-## Notes and caveats
-
-- **`tool_choice` errors.** smolagents defaults to `tool_choice="required"`, which
-  Hugging Face Inference Providers reject in two different ways: `400
-  INVALID_TOOL_CHOICE` (only `auto`/`none` accepted) or `422
-  UNSUPPORTED_OPENAI_PARAMS` (the parameter isn't supported at all). Compounding it,
-  a `tool_choice` set as a *model* kwarg is attached to **every** request, including the
-  planning step, which sends no tools — and a provider that tolerates it alongside
-  `tools` may still reject it on its own. `agent.py` therefore omits the parameter by
-  default and lets the provider apply its own behaviour. Set `MRI_TOOL_CHOICE` to
-  `auto`, `none` or `required` to send it explicitly.
-- **Run `smoke_test.py` first.** The adapters were written against the documented API
-  shapes but I couldn't reach the network to verify them live; the smoke test calls each
-  backend directly and prints what came back, so any parsing mismatch shows up
-  immediately and locally.
-- Zenodo's public search works without credentials; set `ZENODO_TOKEN` if you hit rate
-  limits.
-- OpenNeuro is NIfTI-first — it will almost never satisfy `photographic_only`. That's
-  correct behaviour, not a bug.
-- The ontology has 13 lesion families. Add one by appending a `LesionType` to
-  `LESION_ONTOLOGY` — no other file needs to change.
-- Licences are reported as declared by the repository. Always verify the licence and
+- Licences are reported as the Hub declares them. Check the licence and
   de-identification status yourself before using medical imaging data.
-
-## Extending it
-
-- **New source**: implement `search()` / `inspect()` per the `DatasetSource` protocol in
-  `sources.py`, add it to `REGISTRY` and to the `SourceName` literal in `schemas.py`.
-- **New guardrail**: add a `field_validator` to the relevant `*In` model — no tool code
-  changes.
-- **Deeper verification**: add a step-5 tool that downloads one sample image and confirms
-  it opens with PIL and looks like an MRI slice (greyscale, plausible dimensions).
+- Adding a lesion type is one entry in `LESIONS` in `lesions.py`.
+- Adding a data source means one more `@tool` function in `tools.py`.
