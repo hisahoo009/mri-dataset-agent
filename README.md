@@ -171,11 +171,18 @@ Two things to know before you make it public:
 - **The Space spends *your* inference credits.** It runs on your `HF_TOKEN`, so every
   visitor's query bills your account. Fine for a course submission; add HF OAuth sign-in
   if you share it widely.
-- **`app.py` defaults to `agent_type="tool_calling"` on purpose.** A `CodeAgent` executes
-  model-written Python inside the Space container, and a public text box is a
-  prompt-injection surface. `ToolCallingAgent` emits structured tool calls instead —
-  no code execution at all — and since all four tools take simple typed arguments,
-  nothing is lost. Set `MRI_AGENT_TYPE=code` only if you understand that trade-off.
+- **`app.py` defaults to `agent_type="code"` — for compatibility, not preference.**
+  `ToolCallingAgent` is the safer choice on a public Space (it executes no generated
+  code, and a public text box is a prompt-injection surface), but it requires a model
+  whose Inference Provider route supports the OpenAI `tools` parameter. Many do not,
+  answering `422 UNSUPPORTED_OPENAI_PARAMS: tools`. The `CodeAgent` puts tool
+  descriptions in the prompt instead, so it works with any chat model. If you have a
+  tools-capable model, set `MRI_AGENT_TYPE=tool_calling` and `MRI_AGENT_MODEL`
+  accordingly — that's the better configuration.
+
+  The `CodeAgent` isn't unguarded: smolagents runs generated code through a restricted
+  interpreter rather than `exec`, and `additional_authorized_imports` is limited to
+  `json`, `re`, `statistics`.
 
 Free Spaces sleep after ~48h idle, so the first request after a quiet spell pays a cold
 start on top of the usual 30–60s run.

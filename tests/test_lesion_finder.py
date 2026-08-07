@@ -455,6 +455,6 @@ def test_app_cli_builds_agent_and_applies_policy(monkeypatch, capsys):
 
     assert app.main(["--cli", "glioma datasets", "--policy", "any", "--quiet"]) == 0
     assert "image_policy='any'" in seen["task"]
-    assert seen["kwargs"]["agent_type"] == "code"     # CLI default
+    assert seen["kwargs"]["agent_type"] == app.AGENT_TYPE
     assert seen["kwargs"]["verbosity_level"] == 0     # --quiet
     assert capsys.readouterr().out.strip() == "report"

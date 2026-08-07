@@ -6,14 +6,17 @@
     python app.py --cli "glioma MRI" --policy photographic_or_volumetric
     python app.py --list-lesions
 
-The UI defaults to a ToolCallingAgent: on a public Space the input box is a
-prompt-injection surface, and that variant executes no generated code at all.
-Set MRI_AGENT_TYPE=code to switch back to the CodeAgent.
+The UI defaults to a CodeAgent, because it works with any chat model. The
+ToolCallingAgent is preferable on a public Space — it executes no generated
+code — but it needs a model whose provider supports the OpenAI `tools`
+parameter, and many Hugging Face Inference Provider routes do not (they answer
+422 UNSUPPORTED_OPENAI_PARAMS). Set MRI_AGENT_TYPE=tool_calling together with a
+tools-capable MRI_AGENT_MODEL if you have one.
 
 Space secrets (Settings -> Variables and secrets):
     HF_TOKEN          required — your Inference Providers token
     MRI_AGENT_MODEL   optional — defaults to Qwen/Qwen2.5-Coder-32B-Instruct
-    MRI_AGENT_TYPE    optional — 'tool_calling' (default) or 'code'
+    MRI_AGENT_TYPE    optional — 'code' (default) or 'tool_calling'
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from lesion_finder.ontology import supported_lesion_keys
 
 # gradio is imported lazily inside build_ui() so --cli works without it installed.
 
-AGENT_TYPE = env("MRI_AGENT_TYPE", "tool_calling") or "tool_calling"
+AGENT_TYPE = env("MRI_AGENT_TYPE", "code") or "code"
 
 TITLE = "MRI Lesion Dataset Finder"
 
@@ -131,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cli:
         agent = build_agent(
-            agent_type=args.agent_type or "code",
+            agent_type=args.agent_type or AGENT_TYPE,
             max_steps=args.max_steps,
             verbosity_level=0 if args.quiet else 2,
         )
